@@ -5,7 +5,6 @@ import {
   Typography,
   Grid,
 } from '@mui/material';
-import { Chat } from '../components/Chat';
 import { Lobby } from '../components/Lobby';
 
 const Home: React.FC = () => {
@@ -21,13 +20,8 @@ const Home: React.FC = () => {
         </Typography>
 
         <Grid container spacing={4} sx={{ mt: 2 }}>
-          <Grid item xs={12} md={8}>
+          <Grid item xs={12}>
             <Lobby />
-          </Grid>
-          <Grid item xs={12} md={4}>
-            <Box sx={{ height: 400 }}>
-              <Chat room="lobby" />
-            </Box>
           </Grid>
         </Grid>
       </Box>

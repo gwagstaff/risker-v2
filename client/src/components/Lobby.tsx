@@ -24,6 +24,7 @@ import {
 import { websocketService, Lobby as LobbyType } from '../services/websocket';
 import { useNavigate } from 'react-router-dom';
 import { PlayerRole } from '../hooks/useGame';
+import { LobbyConfig } from './LobbyConfig';
 
 export const Lobby: React.FC = () => {
   const [lobbies, setLobbies] = useState<LobbyType[]>([]);
@@ -33,6 +34,7 @@ export const Lobby: React.FC = () => {
   const [maxPawns, setMaxPawns] = useState(4);
   const [error, setError] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<PlayerRole>(PlayerRole.PAWN);
+  const [currentLobby, setCurrentLobby] = useState<LobbyType | null>(null);
   const navigate = useNavigate();
   const clientId = websocketService.getClientId();
 
@@ -44,11 +46,11 @@ export const Lobby: React.FC = () => {
       if (message.action === 'list') {
         setLobbies(message.lobbies || []);
       } else if (message.action === 'update') {
-        setLobbies(prev => 
-          prev.map(lobby => 
-            lobby.id === message.lobby.id ? message.lobby : lobby
-          )
-        );
+        if (message.lobby) {
+          setCurrentLobby(message.lobby);
+        } else if (message.lobby_id) {
+          setCurrentLobby(null);
+        }
       }
     };
 
@@ -95,9 +97,18 @@ export const Lobby: React.FC = () => {
     websocketService.leaveLobby(lobbyId);
   };
 
+  const handleStartGame = () => {
+    // TODO: Implement game start logic
+    navigate('/game');
+  };
+
   const isInLobby = (lobby: LobbyType) => {
     return lobby.commanders.includes(clientId) || lobby.pawns.includes(clientId);
   };
+
+  if (currentLobby) {
+    return <LobbyConfig lobby={currentLobby} onStartGame={handleStartGame} />;
+  }
 
   return (
     <Box sx={{ width: '100%' }}>

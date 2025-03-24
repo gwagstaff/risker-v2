@@ -5,10 +5,9 @@ export type MessageType = 'chat' | 'matchmaking' | 'match' | 'lobby';
 
 export interface ChatMessage {
   type: 'chat';
-  client_id: string;
+  lobby_id: string;
+  sender: string;
   message: string;
-  timestamp: string;
-  room: string;
 }
 
 export interface MatchMessage {
@@ -115,13 +114,12 @@ class WebSocketService {
   }
 
   // Helper methods for specific message types
-  sendChatMessage(message: string, room: string = 'general') {
+  sendChatMessage(lobbyId: string, message: string) {
     this.sendMessage({
       type: 'chat',
-      client_id: this.clientId,
-      message,
-      room,
-      timestamp: new Date().toISOString()
+      lobby_id: lobbyId,
+      sender: this.clientId,
+      message
     });
   }
 
