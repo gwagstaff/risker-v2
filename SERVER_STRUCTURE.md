@@ -72,6 +72,23 @@ server/
 - Connection management
 - Message routing
 - Protocol handling
+- Lobby operations:
+  - Create lobby
+  - Join lobby
+  - Leave lobby
+  - List lobbies
+  - Update lobby state
+
+### Message Types
+- **Lobby Messages**:
+  - `create`: Create a new lobby
+  - `join`: Join an existing lobby
+  - `leave`: Leave a lobby
+  - `list`: Get list of available lobbies
+  - `update`: Update lobby state
+- **Chat Messages**: In-lobby communication
+- **Match Messages**: Game match information
+- **Matchmaking Messages**: Player matchmaking status
 
 ### Models (`models/`)
 - Data schemas

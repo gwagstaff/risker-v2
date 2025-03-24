@@ -20,7 +20,11 @@ import {
   Select,
   MenuItem,
   Grid,
+  Card,
+  CardContent,
+  CardActions,
 } from '@mui/material';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { websocketService, Lobby as LobbyType } from '../services/websocket';
 import { useNavigate } from 'react-router-dom';
 import { PlayerRole } from '../hooks/useGame';
@@ -37,12 +41,34 @@ export const Lobby: React.FC = () => {
   const [currentLobby, setCurrentLobby] = useState<LobbyType | null>(null);
   const navigate = useNavigate();
   const clientId = websocketService.getClientId();
+  const [joinDialogOpen, setJoinDialogOpen] = useState(false);
+  const [selectedLobby, setSelectedLobby] = useState<LobbyType | null>(null);
+  const [joinRole, setJoinRole] = useState<PlayerRole>(PlayerRole.COMMANDER);
+  const [joinName, setJoinName] = useState('');
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   useEffect(() => {
-    websocketService.connect();
-    websocketService.requestLobbyList();
+    let isSubscribed = true;
+
+    const connectAndRequestList = async () => {
+      try {
+        await websocketService.connect();
+        if (isSubscribed) {
+          await websocketService.requestLobbyList();
+        }
+      } catch (error) {
+        if (isSubscribed) {
+          console.error('Failed to connect to WebSocket:', error);
+          setError('Failed to connect to server. Please try refreshing the page.');
+        }
+      }
+    };
+
+    connectAndRequestList();
 
     const handleLobbyUpdate = (message: any) => {
+      if (!isSubscribed) return;
+      console.log('Received lobby message:', message);
       if (message.action === 'list') {
         setLobbies(message.lobbies || []);
       } else if (message.action === 'update') {
@@ -57,44 +83,73 @@ export const Lobby: React.FC = () => {
     websocketService.onMessage('lobby', handleLobbyUpdate);
 
     return () => {
+      isSubscribed = false;
       websocketService.offMessage('lobby', handleLobbyUpdate);
     };
   }, [clientId]);
 
-  const handleCreateLobby = () => {
+  const handleRefresh = async () => {
+    try {
+      await websocketService.requestLobbyList();
+    } catch (error) {
+      console.error('Failed to refresh lobby list:', error);
+      setError('Failed to refresh lobby list. Please try again.');
+    }
+  };
+
+  const handleCreateLobby = async () => {
     if (newLobbyName.trim()) {
-      websocketService.createLobby(newLobbyName.trim(), maxCommanders, maxPawns);
-      setOpenCreateDialog(false);
-      setNewLobbyName('');
-      setMaxCommanders(2);
-      setMaxPawns(4);
+      try {
+        await websocketService.createLobby(newLobbyName.trim(), maxCommanders, maxPawns);
+        setOpenCreateDialog(false);
+        setNewLobbyName('');
+        setMaxCommanders(2);
+        setMaxPawns(4);
+      } catch (error) {
+        console.error('Failed to create lobby:', error);
+        setError('Failed to create lobby. Please try again.');
+      }
     }
   };
 
-  const handleJoinLobby = (lobbyId: string) => {
-    if (selectedRole === PlayerRole.COMMANDER && !canJoinAsCommander(lobbyId)) {
-      setError('Cannot join as commander - maximum commanders reached');
+  const handleJoinClick = (lobby: LobbyType) => {
+    setSelectedLobby(lobby);
+    setJoinDialogOpen(true);
+  };
+
+  const handleJoinSubmit = async () => {
+    if (!selectedLobby || !joinName.trim()) {
+      setJoinError('Please enter a name');
       return;
     }
-    if (selectedRole === PlayerRole.PAWN && !canJoinAsPawn(lobbyId)) {
-      setError('Cannot join as pawn - maximum pawns reached');
-      return;
+
+    try {
+      setJoinError(null);
+      await websocketService.joinLobby(selectedLobby.id, joinRole, joinName.trim());
+      setJoinDialogOpen(false);
+      setJoinName('');
+      setSelectedLobby(null);
+    } catch (error) {
+      console.error('Failed to join lobby:', error);
+      setJoinError('Failed to join lobby. Please try again.');
     }
-    websocketService.joinLobby(lobbyId, selectedRole);
   };
 
-  const canJoinAsCommander = (lobbyId: string) => {
-    const lobby = lobbies.find(l => l.id === lobbyId);
-    return lobby && lobby.commanders.length < lobby.maxCommanders;
+  const canJoinAsCommander = (lobby: LobbyType) => {
+    return lobby.commanders.length < lobby.maxCommanders;
   };
 
-  const canJoinAsPawn = (lobbyId: string) => {
-    const lobby = lobbies.find(l => l.id === lobbyId);
-    return lobby && lobby.pawns.length < lobby.maxPawns;
+  const canJoinAsPawn = (lobby: LobbyType) => {
+    return lobby.pawns.length < lobby.maxPawns;
   };
 
-  const handleLeaveLobby = (lobbyId: string) => {
-    websocketService.leaveLobby(lobbyId);
+  const handleLeaveLobby = async (lobbyId: string) => {
+    try {
+      await websocketService.leaveLobby(lobbyId);
+    } catch (error) {
+      console.error('Failed to leave lobby:', error);
+      setError('Failed to leave lobby. Please try again.');
+    }
   };
 
   const handleStartGame = () => {
@@ -114,13 +169,23 @@ export const Lobby: React.FC = () => {
     <Box sx={{ width: '100%' }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
         <Typography variant="h5">Game Lobbies</Typography>
-        <Button
-          variant="contained"
-          color="primary"
-          onClick={() => setOpenCreateDialog(true)}
-        >
-          Create Lobby
-        </Button>
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          <Button
+            variant="outlined"
+            color="primary"
+            onClick={handleRefresh}
+            startIcon={<RefreshIcon />}
+          >
+            Refresh
+          </Button>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={() => setOpenCreateDialog(true)}
+          >
+            Create Lobby
+          </Button>
+        </Box>
       </Box>
 
       {error && (
@@ -129,74 +194,58 @@ export const Lobby: React.FC = () => {
         </Alert>
       )}
 
-      <Paper>
-        <List>
+      {/* Lobby List */}
+      <Box sx={{ mt: 4 }}>
+        <Typography variant="h6" gutterBottom>
+          Available Lobbies
+        </Typography>
+        <Grid container spacing={2}>
           {lobbies.map((lobby) => (
-            <ListItem key={lobby.id} divider>
-              <ListItemText
-                primary={lobby.name}
-                secondary={
-                  <Box>
-                    <Typography variant="body2" color="text.secondary">
-                      Commanders: {lobby.commanders.length}/{lobby.maxCommanders}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      Pawns: {lobby.pawns.length}/{lobby.maxPawns}
-                    </Typography>
-                    <Chip
-                      label={lobby.status}
-                      color={
-                        lobby.status === 'waiting'
-                          ? 'warning'
-                          : lobby.status === 'in_progress'
-                          ? 'success'
-                          : 'default'
-                      }
-                      size="small"
-                      sx={{ mt: 1 }}
-                    />
-                  </Box>
-                }
-              />
-              <ListItemSecondaryAction>
-                {isInLobby(lobby) ? (
-                  <Button
-                    variant="outlined"
-                    color="error"
-                    onClick={() => handleLeaveLobby(lobby.id)}
-                  >
-                    Leave
-                  </Button>
-                ) : (
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    <FormControl size="small" sx={{ minWidth: 120 }}>
-                      <InputLabel>Role</InputLabel>
-                      <Select
-                        value={selectedRole}
-                        label="Role"
-                        onChange={(e) => setSelectedRole(e.target.value as PlayerRole)}
-                      >
-                        <MenuItem value={PlayerRole.COMMANDER}>Commander</MenuItem>
-                        <MenuItem value={PlayerRole.PAWN}>Pawn</MenuItem>
-                      </Select>
-                    </FormControl>
+            <Grid item xs={12} sm={6} md={4} key={lobby.id}>
+              <Card>
+                <CardContent>
+                  <Typography variant="h6">{lobby.name}</Typography>
+                  <Typography color="textSecondary">
+                    Commanders: {lobby.commanders.length}/{lobby.maxCommanders}
+                  </Typography>
+                  <Typography color="textSecondary">
+                    Pawns: {lobby.pawns.length}/{lobby.maxPawns}
+                  </Typography>
+                  <Typography color="textSecondary">
+                    Status: {lobby.status}
+                  </Typography>
+                </CardContent>
+                <CardActions>
+                  {isInLobby(lobby) ? (
                     <Button
-                      variant="contained"
+                      size="small"
+                      color="error"
+                      onClick={() => handleLeaveLobby(lobby.id)}
+                    >
+                      Leave
+                    </Button>
+                  ) : (
+                    <Button
+                      size="small"
                       color="primary"
-                      onClick={() => handleJoinLobby(lobby.id)}
-                      disabled={lobby.status !== 'waiting' || 
-                        (selectedRole === PlayerRole.COMMANDER && !canJoinAsCommander(lobby.id)) ||
-                        (selectedRole === PlayerRole.PAWN && !canJoinAsPawn(lobby.id))}
+                      onClick={() => handleJoinClick(lobby)}
+                      disabled={
+                        (joinRole === PlayerRole.COMMANDER &&
+                          lobby.commanders.length >= lobby.maxCommanders) ||
+                        (joinRole === PlayerRole.PAWN &&
+                          lobby.pawns.length >= lobby.maxPawns) ||
+                        lobby.status !== 'waiting'
+                      }
                     >
                       Join
                     </Button>
-                  </Box>
-                )}
-              </ListItemSecondaryAction>
-            </ListItem>
+                  )}
+                </CardActions>
+              </Card>
+            </Grid>
           ))}
-        </List>
-      </Paper>
+        </Grid>
+      </Box>
 
       <Dialog open={openCreateDialog} onClose={() => setOpenCreateDialog(false)}>
         <DialogTitle>Create New Lobby</DialogTitle>
@@ -247,6 +296,40 @@ export const Lobby: React.FC = () => {
           <Button onClick={() => setOpenCreateDialog(false)}>Cancel</Button>
           <Button onClick={handleCreateLobby} variant="contained">
             Create
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Join Lobby Dialog */}
+      <Dialog open={joinDialogOpen} onClose={() => setJoinDialogOpen(false)}>
+        <DialogTitle>Join Lobby</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
+            <TextField
+              label="Your Name"
+              value={joinName}
+              onChange={(e) => setJoinName(e.target.value)}
+              fullWidth
+              error={!!joinError}
+              helperText={joinError}
+            />
+            <FormControl fullWidth>
+              <InputLabel>Role</InputLabel>
+              <Select
+                value={joinRole}
+                onChange={(e) => setJoinRole(e.target.value as PlayerRole)}
+                label="Role"
+              >
+                <MenuItem value={PlayerRole.COMMANDER}>Commander</MenuItem>
+                <MenuItem value={PlayerRole.PAWN}>Pawn</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setJoinDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleJoinSubmit} variant="contained" color="primary">
+            Join
           </Button>
         </DialogActions>
       </Dialog>

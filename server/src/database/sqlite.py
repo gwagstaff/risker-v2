@@ -3,7 +3,7 @@ import aiosqlite
 import time
 import logging
 from typing import Optional, List, Dict, Any
-from uuid import uuid4, UUID
+from uuid import uuid4
 import json
 from pathlib import Path
 
@@ -112,7 +112,7 @@ class SQLiteDatabase(Database):
             "pawns": []
         }
 
-    async def get_lobby(self, lobby_id: UUID) -> Optional[Dict[str, Any]]:
+    async def get_lobby(self, lobby_id: str) -> Optional[Dict[str, Any]]:
         """Get lobby by ID"""
         if not self.conn:
             raise RuntimeError("Database not connected")
@@ -120,7 +120,7 @@ class SQLiteDatabase(Database):
         async with self.conn.cursor() as cursor:
             await cursor.execute('''
                 SELECT * FROM lobbies WHERE id = ?
-            ''', (str(lobby_id),))
+            ''', (lobby_id,))
             row = await cursor.fetchone()
 
             if not row:
@@ -132,7 +132,7 @@ class SQLiteDatabase(Database):
                 FROM players p
                 JOIN lobby_players lp ON p.id = lp.player_id
                 WHERE lp.lobby_id = ?
-            ''', (str(lobby_id),))
+            ''', (lobby_id,))
             players = await cursor.fetchall()
 
             commanders = []
@@ -196,7 +196,7 @@ class SQLiteDatabase(Database):
 
             return lobbies
 
-    async def update_lobby(self, lobby_id: UUID, data: Dict[str, Any]) -> bool:
+    async def update_lobby(self, lobby_id: str, data: Dict[str, Any]) -> bool:
         """Update lobby data"""
         if not self.conn:
             raise RuntimeError("Database not connected")
@@ -211,21 +211,21 @@ class SQLiteDatabase(Database):
                 data.get("max_commanders"),
                 data.get("max_pawns"),
                 data.get("status"),
-                str(lobby_id)
+                lobby_id
             ))
             await self.conn.commit()
             return cursor.rowcount > 0
 
-    async def delete_lobby(self, lobby_id: UUID) -> bool:
+    async def delete_lobby(self, lobby_id: str) -> bool:
         """Delete a lobby"""
         if not self.conn:
             raise RuntimeError("Database not connected")
 
         async with self.conn.cursor() as cursor:
             # First remove all player associations
-            await cursor.execute('DELETE FROM lobby_players WHERE lobby_id = ?', (str(lobby_id),))
+            await cursor.execute('DELETE FROM lobby_players WHERE lobby_id = ?', (lobby_id,))
             # Then delete the lobby
-            await cursor.execute('DELETE FROM lobbies WHERE id = ?', (str(lobby_id),))
+            await cursor.execute('DELETE FROM lobbies WHERE id = ?', (lobby_id,))
             await self.conn.commit()
             return cursor.rowcount > 0
 
@@ -234,7 +234,7 @@ class SQLiteDatabase(Database):
         if not self.conn:
             raise RuntimeError("Database not connected")
 
-        player_id = str(UUID())
+        player_id = str(uuid4())
         created_at = time.time()
 
         async with self.conn.cursor() as cursor:
@@ -251,13 +251,13 @@ class SQLiteDatabase(Database):
             "created_at": created_at
         }
 
-    async def get_player(self, player_id: UUID) -> Optional[Dict[str, Any]]:
+    async def get_player(self, player_id: str) -> Optional[Dict[str, Any]]:
         """Get player by ID"""
         if not self.conn:
             raise RuntimeError("Database not connected")
 
         async with self.conn.cursor() as cursor:
-            await cursor.execute('SELECT * FROM players WHERE id = ?', (str(player_id),))
+            await cursor.execute('SELECT * FROM players WHERE id = ?', (player_id,))
             row = await cursor.fetchone()
 
             if not row:
@@ -270,7 +270,7 @@ class SQLiteDatabase(Database):
                 "created_at": row[3]
             }
 
-    async def update_player(self, player_id: UUID, data: Dict[str, Any]) -> bool:
+    async def update_player(self, player_id: str, data: Dict[str, Any]) -> bool:
         """Update player data"""
         if not self.conn:
             raise RuntimeError("Database not connected")
@@ -283,25 +283,25 @@ class SQLiteDatabase(Database):
             ''', (
                 data.get("name"),
                 data.get("role"),
-                str(player_id)
+                player_id
             ))
             await self.conn.commit()
             return cursor.rowcount > 0
 
-    async def delete_player(self, player_id: UUID) -> bool:
+    async def delete_player(self, player_id: str) -> bool:
         """Delete a player"""
         if not self.conn:
             raise RuntimeError("Database not connected")
 
         async with self.conn.cursor() as cursor:
             # First remove all lobby associations
-            await cursor.execute('DELETE FROM lobby_players WHERE player_id = ?', (str(player_id),))
+            await cursor.execute('DELETE FROM lobby_players WHERE player_id = ?', (player_id,))
             # Then delete the player
-            await cursor.execute('DELETE FROM players WHERE id = ?', (str(player_id),))
+            await cursor.execute('DELETE FROM players WHERE id = ?', (player_id,))
             await self.conn.commit()
             return cursor.rowcount > 0
 
-    async def add_player_to_lobby(self, player_id: UUID, lobby_id: UUID) -> bool:
+    async def add_player_to_lobby(self, player_id: str, lobby_id: str) -> bool:
         """Add a player to a lobby"""
         if not self.conn:
             raise RuntimeError("Database not connected")
@@ -311,13 +311,13 @@ class SQLiteDatabase(Database):
                 await cursor.execute('''
                     INSERT INTO lobby_players (lobby_id, player_id, joined_at)
                     VALUES (?, ?, ?)
-                ''', (str(lobby_id), str(player_id), time.time()))
+                ''', (lobby_id, player_id, time.time()))
                 await self.conn.commit()
                 return True
             except sqlite3.IntegrityError:
                 return False
 
-    async def remove_player_from_lobby(self, player_id: UUID, lobby_id: UUID) -> bool:
+    async def remove_player_from_lobby(self, player_id: str, lobby_id: str) -> bool:
         """Remove a player from a lobby"""
         if not self.conn:
             raise RuntimeError("Database not connected")
@@ -326,11 +326,11 @@ class SQLiteDatabase(Database):
             await cursor.execute('''
                 DELETE FROM lobby_players
                 WHERE lobby_id = ? AND player_id = ?
-            ''', (str(lobby_id), str(player_id)))
+            ''', (lobby_id, player_id))
             await self.conn.commit()
             return cursor.rowcount > 0
 
-    async def get_lobby_players(self, lobby_id: UUID) -> List[Dict[str, Any]]:
+    async def get_lobby_players(self, lobby_id: str) -> List[Dict[str, Any]]:
         """Get all players in a lobby"""
         if not self.conn:
             raise RuntimeError("Database not connected")
@@ -341,7 +341,7 @@ class SQLiteDatabase(Database):
                 FROM players p
                 JOIN lobby_players lp ON p.id = lp.player_id
                 WHERE lp.lobby_id = ?
-            ''', (str(lobby_id),))
+            ''', (lobby_id,))
             rows = await cursor.fetchall()
 
             return [{
@@ -357,7 +357,7 @@ class SQLiteDatabase(Database):
         if not self.conn:
             raise RuntimeError("Database not connected")
 
-        command_id = str(UUID())
+        command_id = str(uuid4())
         timestamp = time.time()
         payload_json = json.dumps(payload)
 

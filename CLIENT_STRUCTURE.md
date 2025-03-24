@@ -45,6 +45,11 @@ client/
 - Game state synchronization
 - API integration
 - Authentication services
+- Lobby management:
+  - Create/join/leave lobbies
+  - List available lobbies
+  - Handle lobby updates
+  - Manage player roles (Commander/Pawn)
 
 ### Pages (`pages/`)
 - **Home.tsx**: Landing page
@@ -64,6 +69,18 @@ client/
 - Local state management
 - WebSocket message handling
 - Error state handling
+
+### Message Handling
+- **WebSocket Messages**:
+  - Lobby operations (create, join, leave, list)
+  - Chat messages
+  - Match updates
+  - Matchmaking status
+- **State Management**:
+  - Lobby state
+  - Player state
+  - Game state
+  - Connection state
 
 ### UI/UX Features
 - Responsive design

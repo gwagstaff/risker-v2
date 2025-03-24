@@ -50,51 +50,70 @@ class WebSocketService {
   private ws: WebSocket | null = null;
   private clientId: string;
   private messageHandlers: Map<MessageType, ((message: any) => void)[]> = new Map();
+  private connectionPromise: Promise<void> | null = null;
 
   constructor() {
     this.clientId = uuidv4();
   }
 
-  connect() {
-    if (this.ws) {
-      return;
+  async connect(): Promise<void> {
+    if (this.connectionPromise) {
+      return this.connectionPromise;
     }
 
-    this.ws = new WebSocket(`ws://localhost:8000/ws/${this.clientId}`);
+    this.connectionPromise = new Promise((resolve, reject) => {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        resolve();
+        return;
+      }
 
-    this.ws.onopen = () => {
-      console.log('WebSocket connected');
-    };
+      this.ws = new WebSocket(`ws://localhost:8000/ws/${this.clientId}`);
 
-    this.ws.onmessage = (event) => {
-      const message = JSON.parse(event.data) as WebSocketMessage;
-      const handlers = this.messageHandlers.get(message.type) || [];
-      handlers.forEach(handler => handler(message));
-    };
+      this.ws.onopen = () => {
+        console.log('WebSocket connected');
+        resolve();
+      };
 
-    this.ws.onclose = () => {
-      console.log('WebSocket disconnected');
-      this.ws = null;
-    };
+      this.ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data) as WebSocketMessage;
+          console.log('Received WebSocket message:', message);
+          const handlers = this.messageHandlers.get(message.type) || [];
+          handlers.forEach(handler => handler(message));
+        } catch (error) {
+          console.error('Error handling WebSocket message:', error);
+        }
+      };
 
-    this.ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      this.ws = null;
-    };
+      this.ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        this.ws = null;
+        this.connectionPromise = null;
+      };
+
+      this.ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        this.ws = null;
+        this.connectionPromise = null;
+        reject(error);
+      };
+    });
+
+    return this.connectionPromise;
   }
 
-  disconnect() {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-  }
-
-  sendMessage(message: WebSocketMessage) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
-    } else {
-      console.error('WebSocket is not connected');
+  async sendMessage(message: WebSocketMessage): Promise<void> {
+    try {
+      await this.connect();
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        console.log('Sending WebSocket message:', message);
+        this.ws.send(JSON.stringify(message));
+      } else {
+        throw new Error('WebSocket is not connected');
+      }
+    } catch (error) {
+      console.error('Error sending WebSocket message:', error);
+      throw error;
     }
   }
 
@@ -142,8 +161,8 @@ class WebSocketService {
   }
 
   // Lobby methods
-  createLobby(name: string, maxCommanders: number, maxPawns: number) {
-    this.sendMessage({
+  async createLobby(name: string, maxCommanders: number, maxPawns: number) {
+    await this.sendMessage({
       type: 'lobby',
       action: 'create',
       name,
@@ -152,25 +171,26 @@ class WebSocketService {
     });
   }
 
-  joinLobby(lobbyId: string, role: PlayerRole) {
-    this.sendMessage({
+  async joinLobby(lobbyId: string, role: PlayerRole, name: string) {
+    await this.sendMessage({
       type: 'lobby',
       action: 'join',
       lobby_id: lobbyId,
-      role
+      role,
+      name
     });
   }
 
-  leaveLobby(lobbyId: string) {
-    this.sendMessage({
+  async leaveLobby(lobbyId: string) {
+    await this.sendMessage({
       type: 'lobby',
       action: 'leave',
       lobby_id: lobbyId
     });
   }
 
-  requestLobbyList() {
-    this.sendMessage({
+  async requestLobbyList() {
+    await this.sendMessage({
       type: 'lobby',
       action: 'list'
     });

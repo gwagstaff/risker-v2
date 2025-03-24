@@ -3,6 +3,9 @@ from typing import Dict, Optional
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PlayerRole(str, Enum):
     COMMANDER = "commander"
@@ -58,21 +61,29 @@ class GameState(BaseModel):
     def join_session(self, player_id: UUID, session_id: UUID) -> bool:
         player = self.players.get(player_id)
         session = self.sessions.get(session_id)
+
+        logger.info(f"Attempting to join session {session_id} for player {player_id}")
+        logger.info(f"Player found: {player is not None}, Session found: {session is not None}")
         
         if not player or not session:
+            logger.error(f"Join failed - Player exists: {player is not None}, Session exists: {session is not None}")
             return False
             
         if session.is_full():
+            logger.error(f"Join failed - Session is full. Commander count: {session.get_commander_count()}/{session.max_commanders}, Pawn count: {session.get_pawn_count()}/{session.max_pawns}")
             return False
             
         if player.role == PlayerRole.COMMANDER and not session.can_join_as_commander():
+            logger.error(f"Join failed - Cannot join as commander. Current commanders: {session.get_commander_count()}/{session.max_commanders}")
             return False
             
         if player.role == PlayerRole.PAWN and not session.can_join_as_pawn():
+            logger.error(f"Join failed - Cannot join as pawn. Current pawns: {session.get_pawn_count()}/{session.max_pawns}")
             return False
             
         player.session_id = session_id
         session.players[player_id] = player
+        logger.info(f"Successfully joined session {session_id} for player {player_id}")
         return True
 
     def leave_session(self, player_id: UUID) -> bool:
