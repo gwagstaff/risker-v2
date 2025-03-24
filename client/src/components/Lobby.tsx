@@ -100,7 +100,12 @@ export const Lobby: React.FC = () => {
   const handleCreateLobby = async () => {
     if (newLobbyName.trim()) {
       try {
-        await websocketService.createLobby(newLobbyName.trim(), maxCommanders, maxPawns);
+        await websocketService.createLobby(
+          newLobbyName.trim(),
+          maxCommanders,
+          maxPawns,
+          "Host" // Default name for the creator
+        );
         setOpenCreateDialog(false);
         setNewLobbyName('');
         setMaxCommanders(2);

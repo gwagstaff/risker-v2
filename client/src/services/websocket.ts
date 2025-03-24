@@ -42,6 +42,7 @@ export interface LobbyMessage {
   role?: PlayerRole;
   maxCommanders?: number;
   maxPawns?: number;
+  creator_name?: string;
 }
 
 export type WebSocketMessage = ChatMessage | MatchMessage | MatchmakingMessage | LobbyMessage;
@@ -161,13 +162,14 @@ class WebSocketService {
   }
 
   // Lobby methods
-  async createLobby(name: string, maxCommanders: number, maxPawns: number) {
+  async createLobby(name: string, maxCommanders: number, maxPawns: number, creatorName: string) {
     await this.sendMessage({
       type: 'lobby',
       action: 'create',
       name,
       maxCommanders,
-      maxPawns
+      maxPawns,
+      creator_name: creatorName
     });
   }
 

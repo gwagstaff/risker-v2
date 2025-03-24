@@ -130,6 +130,7 @@ class GameServer:
                 name = data.get("name")
                 max_commanders = data.get("maxCommanders", 2)
                 max_pawns = data.get("maxPawns", 4)
+                creator_name = data.get("creator_name", "Host")
                 
                 logger.info(f"Creating lobby with name: {name}, max_commanders: {max_commanders}, max_pawns: {max_pawns}")
                 
@@ -145,6 +146,19 @@ class GameServer:
                 )
                 self.game_state.sessions[session.id] = session
                 logger.info(f"Game session created and added to state: {session.id}")
+
+                # Create and join creator as commander
+                db_player = await self.db.create_player(creator_name, PlayerRole.COMMANDER.value)
+                player = Player(id=UUID(db_player["id"]), name=creator_name, role=PlayerRole.COMMANDER)
+                self.game_state.players[player.id] = player
+                self.connections[player.id] = websocket
+                
+                if self.game_state.join_session(player.id, session.id):
+                    await self.db.add_player_to_lobby(str(player.id), str(session.id))
+                    logger.info(f"Creator joined as commander: {player.id}")
+                else:
+                    logger.error(f"Failed to join creator as commander: {player.id}")
+                    return {"type": "error", "message": "Failed to join as commander"}
                 
                 return {
                     "type": "lobby",
@@ -152,8 +166,8 @@ class GameServer:
                     "lobby": {
                         "id": str(session.id),
                         "name": session.name,
-                        "commanders": [],
-                        "pawns": [],
+                        "commanders": [str(p.id) for p in session.players.values() if p.role == PlayerRole.COMMANDER],
+                        "pawns": [str(p.id) for p in session.players.values() if p.role == PlayerRole.PAWN],
                         "maxCommanders": session.max_commanders,
                         "maxPawns": session.max_pawns,
                         "status": "waiting",
