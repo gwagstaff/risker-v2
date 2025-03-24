@@ -1,12 +1,15 @@
 import sqlite3
 import aiosqlite
 import time
+import logging
 from typing import Optional, List, Dict, Any
-from uuid import UUID
+from uuid import uuid4, UUID
 import json
 from pathlib import Path
 
 from .base import Database
+
+logger = logging.getLogger(__name__)
 
 class SQLiteDatabase(Database):
     def __init__(self, db_path: str = "risker.db"):
@@ -87,7 +90,7 @@ class SQLiteDatabase(Database):
         if not self.conn:
             raise RuntimeError("Database not connected")
 
-        lobby_id = str(UUID())
+        lobby_id = str(uuid4())
         created_at = time.time()
 
         async with self.conn.cursor() as cursor:
@@ -96,6 +99,7 @@ class SQLiteDatabase(Database):
                 VALUES (?, ?, ?, ?, ?)
             ''', (lobby_id, name, max_commanders, max_pawns, created_at))
             await self.conn.commit()
+        logger.info(f"Lobby created: {lobby_id}")
 
         return {
             "id": lobby_id,

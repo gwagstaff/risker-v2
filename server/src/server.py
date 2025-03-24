@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from network.server import GameServer
+from src.network.server import GameServer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

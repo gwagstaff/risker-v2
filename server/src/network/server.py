@@ -7,6 +7,7 @@ import websockets
 from websockets.server import WebSocketServerProtocol
 
 from src.models import GameState, Player, PlayerRole, GameSession
+from src.database.sqlite import SQLiteDatabase
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,17 +18,82 @@ class GameServer:
         self.port = port
         self.game_state = GameState()
         self.connections: Dict[UUID, WebSocketServerProtocol] = {}
+        self.db = SQLiteDatabase()
+        self.server = None
+        self._running = False
+        logger.info("GameServer initialized")
+        
+    async def start(self):
+        if self._running:
+            return
+            
+        self._running = True
+        # Initialize database connection
+        try:
+            await self.db.connect()
+            logger.info("Database connection established")
+        except Exception as e:
+            logger.error(f"Failed to connect to database: {str(e)}", exc_info=True)
+            raise
+        try:
+            self.server = await websockets.serve(self.handle_connection, self.host, self.port)
+            logger.info(f"Game server started on ws://{self.host}:{self.port}")
+            await asyncio.Future()  # run forever
+        finally:
+            await self.stop()
+            
+    async def stop(self):
+        if not self._running:
+            return
+            
+        self._running = False
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+        # Clean up database connection
+        await self.db.disconnect()
+        # Clear all connections
+        self.connections.clear()
+        logger.info("Server stopped")
+        
+    async def restart(self):
+        logger.info("Restarting server...")
+        await self.stop()
+        await self.start()
         
     async def handle_connection(self, websocket: WebSocketServerProtocol):
         player_id = None
         try:
             async for message in websocket:
-                data = json.loads(message)
-                response = await self.handle_message(data, websocket)
-                if response:
-                    await websocket.send(json.dumps(response))
+                try:
+                    data = json.loads(message)
+                    logger.info(f"Received message: {data}")
+                    
+                    # Store the WebSocket command if we have a player_id
+                    if player_id:
+                        try:
+                            await self.db.store_websocket_command(
+                                client_id=str(player_id),
+                                message_type=data.get("type", "unknown"),
+                                action=data.get("action", "unknown"),
+                                payload=data
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to store WebSocket command: {e}")
+                    
+                    response = await self.handle_message(data, websocket)
+                    if response:
+                        await websocket.send(json.dumps(response))
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse message: {e}")
+                    await websocket.send(json.dumps({"type": "error", "message": "Invalid JSON"}))
+                except Exception as e:
+                    logger.error(f"Error handling message: {e}")
+                    await websocket.send(json.dumps({"type": "error", "message": "Internal server error"}))
         except websockets.exceptions.ConnectionClosed:
             logger.info(f"Connection closed for player {player_id}")
+        except Exception as e:
+            logger.error(f"Connection error: {e}")
         finally:
             if player_id:
                 self.handle_disconnect(player_id)
@@ -54,10 +120,14 @@ class GameServer:
         role = PlayerRole(data.get("role"))
         session_id = UUID(data.get("session_id"))
         
-        player = self.game_state.create_player(name, role)
+        # Create player in database
+        db_player = await self.db.create_player(name, role.value)
+        player = Player(id=UUID(db_player["id"]), name=name, role=role)
         self.connections[player.id] = websocket
         
         if self.game_state.join_session(player.id, session_id):
+            # Add player to lobby in database
+            await self.db.add_player_to_lobby(player.id, session_id)
             return {
                 "type": "joined",
                 "player_id": str(player.id),
@@ -67,7 +137,19 @@ class GameServer:
 
     async def handle_create_session(self, data: dict) -> dict:
         name = data.get("name")
-        session = self.game_state.create_session(name)
+        max_commanders = data.get("maxCommanders", 2)
+        max_pawns = data.get("maxPawns", 4)
+        
+        # Create session in database
+        db_session = await self.db.create_lobby(name, max_commanders, max_pawns)
+        session = GameSession(
+            id=UUID(db_session["id"]),
+            name=name,
+            max_commanders=max_commanders,
+            max_pawns=max_pawns
+        )
+        self.game_state.sessions[session.id] = session
+        
         return {
             "type": "session_created",
             "session_id": str(session.id)
@@ -75,42 +157,71 @@ class GameServer:
 
     async def handle_leave(self, data: dict) -> dict:
         player_id = UUID(data.get("player_id"))
-        if self.game_state.leave_session(player_id):
-            return {"type": "left", "player_id": str(player_id)}
+        if player_id:
+            # Remove player from lobby in database
+            session = self.game_state.get_session(self.game_state.players[player_id].session_id)
+            if session:
+                await self.db.remove_player_from_lobby(player_id, session.id)
+            if self.game_state.leave_session(player_id):
+                return {"type": "left", "player_id": str(player_id)}
         return {"type": "error", "message": "Failed to leave session"}
 
     async def handle_lobby(self, data: dict, websocket: WebSocketServerProtocol) -> dict:
         action = data.get("action")
+        logger.info(f"Handling lobby action: {action} with data: {data}")
         
         if action == "create":
-            name = data.get("name")
-            max_commanders = data.get("maxCommanders", 2)
-            max_pawns = data.get("maxPawns", 4)
-            session = self.game_state.create_session(name)
-            session.max_commanders = max_commanders
-            session.max_pawns = max_pawns
-            return {
-                "type": "lobby",
-                "action": "update",
-                "lobby": {
-                    "id": str(session.id),
-                    "name": session.name,
-                    "commanders": [],
-                    "pawns": [],
-                    "maxCommanders": session.max_commanders,
-                    "maxPawns": session.max_pawns,
-                    "status": "waiting",
-                    "created_at": session.created_at
+            try:
+                name = data.get("name")
+                max_commanders = data.get("maxCommanders", 2)
+                max_pawns = data.get("maxPawns", 4)
+                
+                logger.info(f"Creating lobby with name: {name}, max_commanders: {max_commanders}, max_pawns: {max_pawns}")
+                
+                # Create session in database
+                db_session = await self.db.create_lobby(name, max_commanders, max_pawns)
+                logger.info(f"Database session created: {db_session}")
+                
+                session = GameSession(
+                    id=UUID(db_session["id"]),
+                    name=name,
+                    max_commanders=max_commanders,
+                    max_pawns=max_pawns
+                )
+                self.game_state.sessions[session.id] = session
+                logger.info(f"Game session created and added to state: {session.id}")
+                
+                return {
+                    "type": "lobby",
+                    "action": "update",
+                    "lobby": {
+                        "id": str(session.id),
+                        "name": session.name,
+                        "commanders": [],
+                        "pawns": [],
+                        "maxCommanders": session.max_commanders,
+                        "maxPawns": session.max_pawns,
+                        "status": "waiting",
+                        "created_at": session.created_at
+                    }
                 }
-            }
+            except Exception as e:
+                logger.error(f"Error creating lobby: {str(e)}", exc_info=True)
+                return {"type": "error", "message": f"Failed to create lobby: {str(e)}"}
             
         elif action == "join":
             lobby_id = UUID(data.get("lobby_id"))
             role = PlayerRole(data.get("role"))
-            player = self.game_state.create_player(str(player_id), role)
+            name = data.get("name")
+            
+            # Create player in database
+            db_player = await self.db.create_player(name, role.value)
+            player = Player(id=UUID(db_player["id"]), name=name, role=role)
             self.connections[player.id] = websocket
             
             if self.game_state.join_session(player.id, lobby_id):
+                # Add player to lobby in database
+                await self.db.add_player_to_lobby(player.id, lobby_id)
                 session = self.game_state.get_session(lobby_id)
                 return {
                     "type": "lobby",
@@ -130,28 +241,21 @@ class GameServer:
             
         elif action == "leave":
             lobby_id = UUID(data.get("lobby_id"))
+            player_id = UUID(data.get("player_id"))
             if player_id:
-                if self.game_state.leave_session(UUID(player_id)):
+                # Remove player from lobby in database
+                await self.db.remove_player_from_lobby(player_id, lobby_id)
+                if self.game_state.leave_session(player_id):
                     return {"type": "lobby", "action": "update", "lobby_id": str(lobby_id)}
             return {"type": "error", "message": "Failed to leave lobby"}
             
         elif action == "list":
+            # Get lobbies from database
+            db_lobbies = await self.db.list_lobbies()
             return {
                 "type": "lobby",
                 "action": "list",
-                "lobbies": [
-                    {
-                        "id": str(session.id),
-                        "name": session.name,
-                        "commanders": [str(p.id) for p in session.players.values() if p.role == PlayerRole.COMMANDER],
-                        "pawns": [str(p.id) for p in session.players.values() if p.role == PlayerRole.PAWN],
-                        "maxCommanders": session.max_commanders,
-                        "maxPawns": session.max_pawns,
-                        "status": "waiting" if not session.is_active else "in_progress",
-                        "created_at": session.created_at
-                    }
-                    for session in self.game_state.sessions.values()
-                ]
+                "lobbies": db_lobbies
             }
             
         return {"type": "error", "message": "Unknown lobby action"}
@@ -179,9 +283,4 @@ class GameServer:
 
     def handle_disconnect(self, player_id: UUID):
         self.game_state.leave_session(player_id)
-        self.connections.pop(player_id, None)
-
-    async def start(self):
-        async with websockets.serve(self.handle_connection, self.host, self.port):
-            logger.info(f"Game server started on ws://{self.host}:{self.port}")
-            await asyncio.Future()  # run forever 
+        self.connections.pop(player_id, None) 
